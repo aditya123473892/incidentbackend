@@ -12,7 +12,7 @@ const signup = async (req, res) => {
       return res.status(400).json({ error: "Email, password, and full name are required" });
     }
 
-    const allowedRoles = ["user", "admin"];
+    const allowedRoles = ["user", "admin", "risk", "incident"];
     const userRole = allowedRoles.includes(role) ? role : "user";
 
     const existing = await pool.request()

@@ -5,20 +5,25 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const { connectDB, pool } = require("./config/db");
 const incidentRoutes = require("./routes/incidents");
+const incidentManagementRoutes = require("./routes/incidentManagement");
 const authRoutes = require("./routes/auth");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    credentials: true,
+    optionsSuccessStatus: 200,
+  }),
+);
 app.use(express.json());
 
 connectDB();
 
 app.use("/api/incidents", incidentRoutes);
+app.use("/api/incident-management", incidentManagementRoutes);
 app.use("/api/auth", authRoutes);
 
 app.get("/", (req, res) => {

@@ -12,25 +12,35 @@ const config = {
   pool: { max: 1, min: 0, idleTimeoutMillis: 30000 },
 };
 
-const JWT_SECRET = "incident-management-secret-key-2026";
+const JWT_SECRET = process.env.JWT_SECRET || "incident-management-secret-key-2026";
 
 async function main() {
   const p = new sql.ConnectionPool(config);
   try {
     await p.connect();
-    // Purge bad seed row if present
-    await p.request().query("DELETE FROM Users WHERE email = 'admin@company.com';");
+    const usersToSeed = [
+      { email: "risk@company.com", password: "risk123", fullName: "Risk Management User", role: "risk" },
+      { email: "incident@company.com", password: "incident123", fullName: "Incident Management User", role: "incident" },
+      { email: "admin@company.com", password: "admin123", fullName: "System Administrator", role: "admin" },
+    ];
 
-    const encodedPw = jwt.sign({ password: "admin123" }, JWT_SECRET);
+    await p.request().query(`
+      DELETE FROM Users
+      WHERE email IN ('risk@company.com', 'incident@company.com', 'admin@company.com');
+    `);
 
-    await p.request()
-      .input("email", "admin@company.com")
-      .input("password", encodedPw)
-      .input("fullName", "System Administrator")
-      .input("role", "admin")
-      .query(
-        "INSERT INTO Users (email, password, fullName, role) VALUES (@email, @password, @fullName, @role);"
-      );
+    for (const user of usersToSeed) {
+      const encodedPw = jwt.sign({ password: user.password }, JWT_SECRET);
+
+      await p.request()
+        .input("email", user.email)
+        .input("password", encodedPw)
+        .input("fullName", user.fullName)
+        .input("role", user.role)
+        .query(
+          "INSERT INTO Users (email, password, fullName, role) VALUES (@email, @password, @fullName, @role);"
+        );
+    }
 
     const users = await p.request().query("SELECT id, email, role, fullName FROM Users;");
     console.log("Users in DB:", JSON.stringify(users.recordset, null, 2));

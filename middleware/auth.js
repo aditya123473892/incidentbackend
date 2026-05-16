@@ -26,4 +26,11 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-module.exports = { authenticateToken, requireAdmin };
+const requireRole = (...roles) => (req, res, next) => {
+  if (!req.user?.role || (!roles.includes(req.user.role) && req.user.role !== "admin")) {
+    return res.status(403).json({ error: "Access denied for this module" });
+  }
+  next();
+};
+
+module.exports = { authenticateToken, requireAdmin, requireRole };

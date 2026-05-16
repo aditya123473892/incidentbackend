@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const { authenticateToken, requireAdmin, requireRole } = require("../middleware/auth");
 const {
   getAllIncidents,
   getIncidentById,
@@ -8,10 +9,10 @@ const {
   deleteIncident,
 } = require("../controllers/incidentController");
 
-router.get("/", getAllIncidents);
-router.get("/:id", getIncidentById);
-router.post("/", createIncident);
-router.put("/:id", updateIncident);
-router.delete("/:id", deleteIncident);
+router.get("/", authenticateToken, requireRole("risk"), getAllIncidents);
+router.get("/:id", authenticateToken, requireRole("risk"), getIncidentById);
+router.post("/", authenticateToken, requireRole("risk"), createIncident);
+router.put("/:id", authenticateToken, requireRole("risk"), updateIncident);
+router.delete("/:id", authenticateToken, requireAdmin, deleteIncident);
 
 module.exports = router;
