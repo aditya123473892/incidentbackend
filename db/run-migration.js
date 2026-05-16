@@ -16,14 +16,29 @@ const config = {
   const p = new sql.ConnectionPool(config);
   await p.connect();
 
-  const script = fs.readFileSync(path.join(__dirname, "alter-incidents-risk.sql"), "utf8");
-  await p.request().query(script);
-  console.log("Migration applied.");
+  const migrations = [
+    "alter-incidents-risk.sql",
+    "alter-incident-management-sla.sql",
+  ];
+
+  for (const migration of migrations) {
+    const script = fs.readFileSync(path.join(__dirname, migration), "utf8");
+    await p.request().query(script);
+    console.log(`${migration} applied.`);
+  }
 
   const cols = await p.request().query(
     "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID('Incidents') ORDER BY column_id"
   );
   console.log("Columns:", cols.recordset.map((c) => c.name).join(", "));
+
+  const incidentManagementCols = await p.request().query(
+    "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID('IncidentManagement') ORDER BY column_id"
+  );
+  console.log(
+    "IncidentManagement columns:",
+    incidentManagementCols.recordset.map((c) => c.name).join(", ")
+  );
 
   await p.close();
 })();
