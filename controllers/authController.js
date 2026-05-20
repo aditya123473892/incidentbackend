@@ -1,8 +1,28 @@
 const { pool } = require("../config/db");
 const jwt = require("jsonwebtoken");
 
-const JWT_SECRET = process.env.JWT_SECRET || "incident-management-secret-key-2026";
+const LEGACY_JWT_SECRET = "incident-management-secret-key-2026";
+const JWT_SECRET = process.env.JWT_SECRET || LEGACY_JWT_SECRET;
 const JWT_EXPIRES_IN = "24h";
+
+const verifyStoredPassword = (storedPassword, password) => {
+  const candidateSecrets = Array.from(new Set([JWT_SECRET, LEGACY_JWT_SECRET]));
+
+  for (const secret of candidateSecrets) {
+    try {
+      const decoded = jwt.verify(storedPassword, secret);
+      if (decoded.password === password) {
+        return true;
+      }
+    } catch (err) {
+      if (err.name !== "JsonWebTokenError" && err.name !== "TokenExpiredError") {
+        throw err;
+      }
+    }
+  }
+
+  return false;
+};
 
 const signup = async (req, res) => {
   try {
@@ -73,9 +93,7 @@ const login = async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    const decoded = jwt.verify(user.password, JWT_SECRET);
-
-    if (decoded.password !== password) {
+    if (!verifyStoredPassword(user.password, password)) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
@@ -113,4 +131,16 @@ const me = async (req, res) => {
   }
 };
 
-module.exports = { signup, login, me };
+const users = async (_req, res) => {
+  try {
+    const result = await pool.request().query(
+      "SELECT id, email, fullName, role FROM Users ORDER BY fullName, email"
+    );
+    res.json(result.recordset);
+  } catch (err) {
+    console.error("Error fetching users:", err);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+};
+
+module.exports = { signup, login, me, users };

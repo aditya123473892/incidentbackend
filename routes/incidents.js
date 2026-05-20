@@ -9,10 +9,10 @@ const {
   deleteIncident,
 } = require("../controllers/incidentController");
 
-router.get("/", authenticateToken, requireRole("risk"), getAllIncidents);
-router.get("/:id", authenticateToken, requireRole("risk"), getIncidentById);
-router.post("/", authenticateToken, requireRole("risk"), createIncident);
-router.put("/:id", authenticateToken, requireRole("risk"), updateIncident);
+router.get("/", authenticateToken, requireRole("risk", "user"), getAllIncidents);
+router.get("/:id", authenticateToken, requireRole("risk", "user"), getIncidentById);
+router.post("/", authenticateToken, requireRole("risk", "user"), createIncident);
+router.put("/:id", authenticateToken, requireRole("risk", "user"), updateIncident);
 router.delete("/:id", authenticateToken, requireAdmin, deleteIncident);
 
 module.exports = router;
