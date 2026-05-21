@@ -3,6 +3,11 @@ BEGIN
     ALTER TABLE Incidents ADD supportingDocName NVARCHAR(255) NULL;
 END
 
+IF COL_LENGTH('Incidents', 'clientName') IS NULL
+BEGIN
+    ALTER TABLE Incidents ADD clientName NVARCHAR(100) NOT NULL CONSTRAINT DF_Incidents_clientName DEFAULT 'Pristine Group';
+END
+
 IF COL_LENGTH('Incidents', 'supportingDocMime') IS NULL
 BEGIN
     ALTER TABLE Incidents ADD supportingDocMime NVARCHAR(150) NULL;

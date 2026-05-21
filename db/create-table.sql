@@ -5,6 +5,7 @@ BEGIN
         id NVARCHAR(36) PRIMARY KEY,
         srNo INT NOT NULL UNIQUE,
         incidentRefNo NVARCHAR(50) NOT NULL,
+        clientName NVARCHAR(100) NOT NULL DEFAULT 'Pristine Group',
         incidentDate DATE NOT NULL,
         incidentDetails NVARCHAR(MAX) NOT NULL,
         incidentCategory NVARCHAR(50) NOT NULL,

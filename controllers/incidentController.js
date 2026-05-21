@@ -1,19 +1,21 @@
 const { pool, sql } = require("../config/db");
 
-const INCIDENT_COLUMNS = `id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
+const INCIDENT_COLUMNS = `id, srNo, incidentRefNo, clientName, incidentDate, incidentDetails, incidentCategory,
               likelihood, impact, riskScore, riskLevel, priority, rca, status,
               supportingDocName, supportingDocMime, adminSupportingDocName, adminSupportingDocMime,
               createdByEmail, createdByName, approvalStatus, verifiedByEmail, verifiedByName,
               approvedByEmail, approvedByName, approvedAt, createdAt, updatedAt`;
 
 function generateRiskRefNo(srNo) {
-  return `RSK-${String(srNo).padStart(3, "0")}`;
+  return `R${String(srNo).padStart(4, "0")}`;
 }
 
 async function ensureIncidentColumns() {
   await pool.request().query(`
     IF COL_LENGTH('Incidents', 'supportingDocName') IS NULL
       ALTER TABLE Incidents ADD supportingDocName NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'clientName') IS NULL
+      ALTER TABLE Incidents ADD clientName NVARCHAR(100) NOT NULL CONSTRAINT DF_Incidents_clientName DEFAULT 'Pristine Group';
     IF COL_LENGTH('Incidents', 'supportingDocMime') IS NULL
       ALTER TABLE Incidents ADD supportingDocMime NVARCHAR(150) NULL;
     IF COL_LENGTH('Incidents', 'supportingDocData') IS NULL
@@ -109,10 +111,12 @@ const CATEGORIES = [
   "Application",
   "Other",
 ];
+const CLIENT_NAMES = ["Pristine Group", "Elogisol Internal"];
 
 function validateIncident(data) {
   const required = [
     "incidentRefNo",
+    "clientName",
     "incidentDate",
     "incidentDetails",
     "incidentCategory",
@@ -131,6 +135,8 @@ function validateIncident(data) {
   if (!STATUSES.includes(data.status)) return `Invalid status: ${data.status}`;
   if (!CATEGORIES.includes(data.incidentCategory))
     return `Invalid category: ${data.incidentCategory}`;
+  if (!CLIENT_NAMES.includes(data.clientName))
+    return `Invalid clientName: ${data.clientName}`;
   return null;
 }
 
@@ -184,6 +190,7 @@ const createIncident = async (req, res) => {
 
     const {
       incidentDate,
+      clientName = "Pristine Group",
       incidentDetails,
       incidentCategory,
       likelihood,
@@ -209,6 +216,7 @@ const createIncident = async (req, res) => {
       .input("id", newId)
       .input("srNo", srNo)
       .input("incidentRefNo", incidentRefNo)
+      .input("clientName", clientName)
       .input("incidentDate", incidentDate)
       .input("incidentDetails", incidentDetails)
       .input("incidentCategory", incidentCategory)
@@ -223,11 +231,11 @@ const createIncident = async (req, res) => {
       .input("createdByName", req.user?.fullName || req.user?.email || "")
       .query(
         `INSERT INTO Incidents
-           (id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
+           (id, srNo, incidentRefNo, clientName, incidentDate, incidentDetails, incidentCategory,
             likelihood, impact, riskScore, riskLevel, priority, rca, status,
             createdByEmail, createdByName, approvalStatus)
          VALUES
-           (@id, @srNo, @incidentRefNo, @incidentDate, @incidentDetails, @incidentCategory,
+           (@id, @srNo, @incidentRefNo, @clientName, @incidentDate, @incidentDetails, @incidentCategory,
             @likelihood, @impact, @riskScore, @riskLevel, @priority, @rca, @status,
             @createdByEmail, @createdByName, 'Pending')`,
       );
@@ -261,7 +269,9 @@ const updateIncident = async (req, res) => {
     ).recordset[0];
     if (!existing) return res.status(404).json({ error: "Incident not found" });
     if (existing.approvalStatus === "Approved") {
-      return res.status(409).json({ error: "Approved risks cannot be updated" });
+      return res
+        .status(409)
+        .json({ error: "Approved risks cannot be updated" });
     }
 
     const valError = validateIncident(req.body);
@@ -270,6 +280,7 @@ const updateIncident = async (req, res) => {
     const { id } = req.params;
     const {
       incidentRefNo,
+      clientName = "Pristine Group",
       incidentDate,
       incidentDetails,
       incidentCategory,
@@ -285,6 +296,7 @@ const updateIncident = async (req, res) => {
       .request()
       .input("id", id)
       .input("incidentRefNo", incidentRefNo)
+      .input("clientName", clientName)
       .input("incidentDate", incidentDate)
       .input("incidentDetails", incidentDetails)
       .input("incidentCategory", incidentCategory)
@@ -298,6 +310,7 @@ const updateIncident = async (req, res) => {
       .query(
         `UPDATE Incidents
             SET incidentRefNo   = @incidentRefNo,
+                clientName      = @clientName,
                 incidentDate    = @incidentDate,
                 incidentDetails = @incidentDetails,
                 incidentCategory= @incidentCategory,
@@ -358,16 +371,24 @@ const uploadSupportingDoc = async (req, res) => {
     ).recordset[0];
     if (!existing) return res.status(404).json({ error: "Incident not found" });
     if (existing.approvalStatus === "Approved") {
-      return res.status(409).json({ error: "Approved risks cannot be updated" });
+      return res
+        .status(409)
+        .json({ error: "Approved risks cannot be updated" });
     }
 
-    const fileBuffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+    const fileBuffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(req.body || []);
     if (!fileBuffer.length) {
       return res.status(400).json({ error: "Supporting document is required" });
     }
 
-    const fileName = req.query.fileName || req.headers["x-file-name"] || "supporting-document";
-    const mimeType = req.query.mimeType || req.headers["content-type"] || "application/octet-stream";
+    const fileName =
+      req.query.fileName || req.headers["x-file-name"] || "supporting-document";
+    const mimeType =
+      req.query.mimeType ||
+      req.headers["content-type"] ||
+      "application/octet-stream";
 
     const request = pool
       .request()
@@ -390,7 +411,7 @@ const uploadSupportingDoc = async (req, res) => {
                   supportingDocMime = @docMime,
                   supportingDocData = @docData,
                   updatedAt = GETDATE()
-            WHERE id = @id`
+            WHERE id = @id`,
     );
 
     if (result.rowsAffected[0] === 0) {
@@ -425,7 +446,7 @@ const viewSupportingDoc = async (req, res) => {
               WHERE id = @id`
           : `SELECT supportingDocName, supportingDocMime, supportingDocData
                FROM Incidents
-              WHERE id = @id`
+              WHERE id = @id`,
       );
 
     const doc = result.recordset[0];
@@ -433,8 +454,14 @@ const viewSupportingDoc = async (req, res) => {
       return res.status(404).json({ error: "Supporting document not found" });
     }
 
-    res.setHeader("Content-Type", doc.supportingDocMime || "application/octet-stream");
-    res.setHeader("Content-Disposition", `inline; filename="${doc.supportingDocName || "supporting-document"}"`);
+    res.setHeader(
+      "Content-Type",
+      doc.supportingDocMime || "application/octet-stream",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${doc.supportingDocName || "supporting-document"}"`,
+    );
     res.send(doc.supportingDocData);
   } catch (err) {
     console.error("Error viewing supporting document:", err);
@@ -454,7 +481,9 @@ const approveIncident = async (req, res) => {
       await pool
         .request()
         .input("id", req.params.id)
-        .query("SELECT createdByEmail, createdByName, approvalStatus FROM Incidents WHERE id = @id")
+        .query(
+          "SELECT createdByEmail, createdByName, approvalStatus FROM Incidents WHERE id = @id",
+        )
     ).recordset[0];
 
     if (!existing) {
@@ -467,13 +496,17 @@ const approveIncident = async (req, res) => {
     const sameCreatorEmail =
       verifiedByEmail &&
       existing.createdByEmail &&
-      String(verifiedByEmail).toLowerCase() === String(existing.createdByEmail).toLowerCase();
+      String(verifiedByEmail).toLowerCase() ===
+        String(existing.createdByEmail).toLowerCase();
     const sameCreatorName =
       existing.createdByName &&
-      String(verifiedByName).trim().toLowerCase() === String(existing.createdByName).trim().toLowerCase();
+      String(verifiedByName).trim().toLowerCase() ===
+        String(existing.createdByName).trim().toLowerCase();
 
     if (sameCreatorEmail || sameCreatorName) {
-      return res.status(400).json({ error: "Verifier cannot be the same user who created the risk" });
+      return res.status(400).json({
+        error: "Verifier cannot be the same user who created the risk",
+      });
     }
 
     const approvedByEmail = req.user?.email || "";
@@ -481,14 +514,18 @@ const approveIncident = async (req, res) => {
     const sameApproverEmail =
       verifiedByEmail &&
       approvedByEmail &&
-      String(verifiedByEmail).toLowerCase() === String(approvedByEmail).toLowerCase();
+      String(verifiedByEmail).toLowerCase() ===
+        String(approvedByEmail).toLowerCase();
     const sameApproverName =
       verifiedByName &&
       approvedByName &&
-      String(verifiedByName).trim().toLowerCase() === String(approvedByName).trim().toLowerCase();
+      String(verifiedByName).trim().toLowerCase() ===
+        String(approvedByName).trim().toLowerCase();
 
     if (sameApproverEmail || sameApproverName) {
-      return res.status(400).json({ error: "Verifier cannot be the same user who approves the risk" });
+      return res.status(400).json({
+        error: "Verifier cannot be the same user who approves the risk",
+      });
     }
 
     await pool
@@ -497,8 +534,7 @@ const approveIncident = async (req, res) => {
       .input("verifiedByEmail", String(verifiedByEmail))
       .input("verifiedByName", String(verifiedByName))
       .input("approvedByEmail", approvedByEmail)
-      .input("approvedByName", approvedByName)
-      .query(`
+      .input("approvedByName", approvedByName).query(`
         UPDATE Incidents
            SET approvalStatus = 'Approved',
                verifiedByEmail = @verifiedByEmail,
