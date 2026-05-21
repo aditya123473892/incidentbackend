@@ -1,4 +1,47 @@
-const { pool } = require("../config/db");
+const { pool, sql } = require("../config/db");
+
+const INCIDENT_COLUMNS = `id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
+              likelihood, impact, riskScore, riskLevel, priority, rca, status,
+              supportingDocName, supportingDocMime, adminSupportingDocName, adminSupportingDocMime,
+              createdByEmail, createdByName, approvalStatus, verifiedByEmail, verifiedByName,
+              approvedByEmail, approvedByName, approvedAt, createdAt, updatedAt`;
+
+function generateRiskRefNo(srNo) {
+  return `RSK-${String(srNo).padStart(3, "0")}`;
+}
+
+async function ensureIncidentColumns() {
+  await pool.request().query(`
+    IF COL_LENGTH('Incidents', 'supportingDocName') IS NULL
+      ALTER TABLE Incidents ADD supportingDocName NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'supportingDocMime') IS NULL
+      ALTER TABLE Incidents ADD supportingDocMime NVARCHAR(150) NULL;
+    IF COL_LENGTH('Incidents', 'supportingDocData') IS NULL
+      ALTER TABLE Incidents ADD supportingDocData VARBINARY(MAX) NULL;
+    IF COL_LENGTH('Incidents', 'adminSupportingDocName') IS NULL
+      ALTER TABLE Incidents ADD adminSupportingDocName NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'adminSupportingDocMime') IS NULL
+      ALTER TABLE Incidents ADD adminSupportingDocMime NVARCHAR(150) NULL;
+    IF COL_LENGTH('Incidents', 'adminSupportingDocData') IS NULL
+      ALTER TABLE Incidents ADD adminSupportingDocData VARBINARY(MAX) NULL;
+    IF COL_LENGTH('Incidents', 'createdByEmail') IS NULL
+      ALTER TABLE Incidents ADD createdByEmail NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'createdByName') IS NULL
+      ALTER TABLE Incidents ADD createdByName NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'approvalStatus') IS NULL
+      ALTER TABLE Incidents ADD approvalStatus NVARCHAR(20) NOT NULL CONSTRAINT DF_Incidents_approvalStatus DEFAULT 'Pending';
+    IF COL_LENGTH('Incidents', 'verifiedByEmail') IS NULL
+      ALTER TABLE Incidents ADD verifiedByEmail NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'verifiedByName') IS NULL
+      ALTER TABLE Incidents ADD verifiedByName NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'approvedByEmail') IS NULL
+      ALTER TABLE Incidents ADD approvedByEmail NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'approvedByName') IS NULL
+      ALTER TABLE Incidents ADD approvedByName NVARCHAR(255) NULL;
+    IF COL_LENGTH('Incidents', 'approvedAt') IS NULL
+      ALTER TABLE Incidents ADD approvedAt DATETIME2 NULL;
+  `);
+}
 
 // Map UI-facing strings → numeric values
 const LIKELIHOOD_MAP = {
@@ -93,9 +136,9 @@ function validateIncident(data) {
 
 const getAllIncidents = async (_req, res) => {
   try {
+    await ensureIncidentColumns();
     const result = await pool.request().query(
-      `SELECT id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
-              likelihood, impact, riskScore, riskLevel, priority, rca, status, createdAt, updatedAt
+      `SELECT ${INCIDENT_COLUMNS}
          FROM Incidents
          ORDER BY srNo DESC`,
     );
@@ -115,12 +158,12 @@ const getAllIncidents = async (_req, res) => {
 
 const getIncidentById = async (req, res) => {
   try {
+    await ensureIncidentColumns();
     const result = await pool
       .request()
       .input("id", req.params.id)
       .query(
-        `SELECT id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
-                likelihood, impact, riskScore, riskLevel, priority, rca, status, createdAt, updatedAt
+        `SELECT ${INCIDENT_COLUMNS}
            FROM Incidents
           WHERE id = @id`,
       );
@@ -135,11 +178,11 @@ const getIncidentById = async (req, res) => {
 
 const createIncident = async (req, res) => {
   try {
+    await ensureIncidentColumns();
     const valError = validateIncident(req.body);
     if (valError) return res.status(400).json({ error: valError });
 
     const {
-      incidentRefNo,
       incidentDate,
       incidentDetails,
       incidentCategory,
@@ -157,6 +200,7 @@ const createIncident = async (req, res) => {
         .query("SELECT ISNULL(MAX(srNo), 0) as maxSrNo FROM Incidents")
     ).recordset[0].maxSrNo;
     const srNo = maxSrNo + 1;
+    const incidentRefNo = generateRiskRefNo(srNo);
 
     const newId = req.body.id || require("crypto").randomUUID();
 
@@ -175,13 +219,17 @@ const createIncident = async (req, res) => {
       .input("priority", priority)
       .input("rca", rca || "")
       .input("status", status)
+      .input("createdByEmail", req.user?.email || "")
+      .input("createdByName", req.user?.fullName || req.user?.email || "")
       .query(
         `INSERT INTO Incidents
            (id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
-            likelihood, impact, riskScore, riskLevel, priority, rca, status)
+            likelihood, impact, riskScore, riskLevel, priority, rca, status,
+            createdByEmail, createdByName, approvalStatus)
          VALUES
            (@id, @srNo, @incidentRefNo, @incidentDate, @incidentDetails, @incidentCategory,
-            @likelihood, @impact, @riskScore, @riskLevel, @priority, @rca, @status)`,
+            @likelihood, @impact, @riskScore, @riskLevel, @priority, @rca, @status,
+            @createdByEmail, @createdByName, 'Pending')`,
       );
 
     const newIncident = (
@@ -189,8 +237,7 @@ const createIncident = async (req, res) => {
         .request()
         .input("id", newId)
         .query(
-          `SELECT id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
-                likelihood, impact, riskScore, riskLevel, priority, rca, status, createdAt, updatedAt
+          `SELECT ${INCIDENT_COLUMNS}
            FROM Incidents
           WHERE id = @id`,
         )
@@ -205,6 +252,18 @@ const createIncident = async (req, res) => {
 
 const updateIncident = async (req, res) => {
   try {
+    await ensureIncidentColumns();
+    const existing = (
+      await pool
+        .request()
+        .input("id", req.params.id)
+        .query("SELECT approvalStatus FROM Incidents WHERE id = @id")
+    ).recordset[0];
+    if (!existing) return res.status(404).json({ error: "Incident not found" });
+    if (existing.approvalStatus === "Approved") {
+      return res.status(409).json({ error: "Approved risks cannot be updated" });
+    }
+
     const valError = validateIncident(req.body);
     if (valError) return res.status(400).json({ error: valError });
 
@@ -260,8 +319,7 @@ const updateIncident = async (req, res) => {
         .request()
         .input("id", id)
         .query(
-          `SELECT id, srNo, incidentRefNo, incidentDate, incidentDetails, incidentCategory,
-                likelihood, impact, riskScore, riskLevel, priority, rca, status, createdAt, updatedAt
+          `SELECT ${INCIDENT_COLUMNS}
            FROM Incidents
           WHERE id = @id`,
         )
@@ -289,11 +347,191 @@ const deleteIncident = async (req, res) => {
   }
 };
 
+const uploadSupportingDoc = async (req, res) => {
+  try {
+    await ensureIncidentColumns();
+    const existing = (
+      await pool
+        .request()
+        .input("id", req.params.id)
+        .query("SELECT approvalStatus FROM Incidents WHERE id = @id")
+    ).recordset[0];
+    if (!existing) return res.status(404).json({ error: "Incident not found" });
+    if (existing.approvalStatus === "Approved") {
+      return res.status(409).json({ error: "Approved risks cannot be updated" });
+    }
+
+    const fileBuffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+    if (!fileBuffer.length) {
+      return res.status(400).json({ error: "Supporting document is required" });
+    }
+
+    const fileName = req.query.fileName || req.headers["x-file-name"] || "supporting-document";
+    const mimeType = req.query.mimeType || req.headers["content-type"] || "application/octet-stream";
+
+    const request = pool
+      .request()
+      .input("id", req.params.id)
+      .input("docName", String(fileName))
+      .input("docMime", String(mimeType))
+      .input("docData", sql.VarBinary(sql.MAX), fileBuffer);
+
+    const isAdminUpload = req.user?.role === "admin";
+    const result = await request.query(
+      isAdminUpload
+        ? `UPDATE Incidents
+              SET adminSupportingDocName = @docName,
+                  adminSupportingDocMime = @docMime,
+                  adminSupportingDocData = @docData,
+                  updatedAt = GETDATE()
+            WHERE id = @id`
+        : `UPDATE Incidents
+              SET supportingDocName = @docName,
+                  supportingDocMime = @docMime,
+                  supportingDocData = @docData,
+                  updatedAt = GETDATE()
+            WHERE id = @id`
+    );
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: "Incident not found" });
+    }
+
+    res.json({
+      message: "Supporting document uploaded",
+      supportingDocName: String(fileName),
+      supportingDocMime: String(mimeType),
+      source: isAdminUpload ? "admin" : "user",
+    });
+  } catch (err) {
+    console.error("Error uploading supporting document:", err);
+    res.status(500).json({ error: "Failed to upload supporting document" });
+  }
+};
+
+const viewSupportingDoc = async (req, res) => {
+  try {
+    await ensureIncidentColumns();
+    const isAdminSource = req.query.source === "admin";
+    const result = await pool
+      .request()
+      .input("id", req.params.id)
+      .query(
+        isAdminSource
+          ? `SELECT adminSupportingDocName AS supportingDocName,
+                    adminSupportingDocMime AS supportingDocMime,
+                    adminSupportingDocData AS supportingDocData
+               FROM Incidents
+              WHERE id = @id`
+          : `SELECT supportingDocName, supportingDocMime, supportingDocData
+               FROM Incidents
+              WHERE id = @id`
+      );
+
+    const doc = result.recordset[0];
+    if (!doc || !doc.supportingDocData) {
+      return res.status(404).json({ error: "Supporting document not found" });
+    }
+
+    res.setHeader("Content-Type", doc.supportingDocMime || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${doc.supportingDocName || "supporting-document"}"`);
+    res.send(doc.supportingDocData);
+  } catch (err) {
+    console.error("Error viewing supporting document:", err);
+    res.status(500).json({ error: "Failed to view supporting document" });
+  }
+};
+
+const approveIncident = async (req, res) => {
+  try {
+    await ensureIncidentColumns();
+    const { verifiedByEmail = "", verifiedByName = "" } = req.body;
+    if (!verifiedByName) {
+      return res.status(400).json({ error: "Verifier name is required" });
+    }
+
+    const existing = (
+      await pool
+        .request()
+        .input("id", req.params.id)
+        .query("SELECT createdByEmail, createdByName, approvalStatus FROM Incidents WHERE id = @id")
+    ).recordset[0];
+
+    if (!existing) {
+      return res.status(404).json({ error: "Incident not found" });
+    }
+    if (existing.approvalStatus === "Approved") {
+      return res.status(409).json({ error: "Risk is already approved" });
+    }
+
+    const sameCreatorEmail =
+      verifiedByEmail &&
+      existing.createdByEmail &&
+      String(verifiedByEmail).toLowerCase() === String(existing.createdByEmail).toLowerCase();
+    const sameCreatorName =
+      existing.createdByName &&
+      String(verifiedByName).trim().toLowerCase() === String(existing.createdByName).trim().toLowerCase();
+
+    if (sameCreatorEmail || sameCreatorName) {
+      return res.status(400).json({ error: "Verifier cannot be the same user who created the risk" });
+    }
+
+    const approvedByEmail = req.user?.email || "";
+    const approvedByName = req.user?.fullName || req.user?.email || "";
+    const sameApproverEmail =
+      verifiedByEmail &&
+      approvedByEmail &&
+      String(verifiedByEmail).toLowerCase() === String(approvedByEmail).toLowerCase();
+    const sameApproverName =
+      verifiedByName &&
+      approvedByName &&
+      String(verifiedByName).trim().toLowerCase() === String(approvedByName).trim().toLowerCase();
+
+    if (sameApproverEmail || sameApproverName) {
+      return res.status(400).json({ error: "Verifier cannot be the same user who approves the risk" });
+    }
+
+    await pool
+      .request()
+      .input("id", req.params.id)
+      .input("verifiedByEmail", String(verifiedByEmail))
+      .input("verifiedByName", String(verifiedByName))
+      .input("approvedByEmail", approvedByEmail)
+      .input("approvedByName", approvedByName)
+      .query(`
+        UPDATE Incidents
+           SET approvalStatus = 'Approved',
+               verifiedByEmail = @verifiedByEmail,
+               verifiedByName = @verifiedByName,
+               approvedByEmail = @approvedByEmail,
+               approvedByName = @approvedByName,
+               approvedAt = GETDATE(),
+               updatedAt = GETDATE()
+         WHERE id = @id
+      `);
+
+    const approved = (
+      await pool
+        .request()
+        .input("id", req.params.id)
+        .query(`SELECT ${INCIDENT_COLUMNS} FROM Incidents WHERE id = @id`)
+    ).recordset[0];
+
+    res.json(approved);
+  } catch (err) {
+    console.error("Error approving incident:", err);
+    res.status(500).json({ error: "Failed to approve incident" });
+  }
+};
+
 module.exports = {
   getAllIncidents,
   getIncidentById,
   createIncident,
   updateIncident,
   deleteIncident,
+  uploadSupportingDoc,
+  viewSupportingDoc,
+  approveIncident,
   computeRisk,
 };
